@@ -1,0 +1,10 @@
+services:
+  chrome-web-store-scraper:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      # Optional — the Chrome Web Store does not block normal volume, so leave this unset.
+      # - CHROME_WEB_STORE_PROXY=http://user:pass@host:port
