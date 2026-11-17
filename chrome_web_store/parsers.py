@@ -35,6 +35,7 @@ import re
 from datetime import datetime, timezone
 
 from chrome_web_store import refs
+from scraper_utils.text import stripped as _text
 
 ITEM_TYPES = {1: "extension", 2: "theme"}
 
@@ -68,13 +69,6 @@ def _get(seq, index, default=None):
         value = seq[index]
         return default if value is None else value
     return default
-
-
-def _text(value):
-    if isinstance(value, str):
-        value = value.strip()
-        return value or None
-    return None
 
 
 def _int(value):

@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chrome_web_store import api, parsers as P, refs  # noqa: E402
+from scraper_utils.testing import hosted_only
 
 FX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 DR = "eimadpbcbfnmbkopoojfekhnkhdbieeh"
@@ -449,3 +450,23 @@ def test_pagination_stops_at_the_page_cap():
     assert api._pagination(3, 50, "tok", 80, has_total=False)["has_next"] is True
     assert api._pagination(1, 50, None, 20, total=0) == {
         "page": 1, "items_per_page": 50, "has_next": False, "total_pages": 0, "total_count": 0}
+
+
+@hosted_only
+def test_consent_cookies_ride_the_gateway_sessions_own_jar():
+    # exit_gateway.Session passes a per-request cookies= to the inner curl
+    # session, whose jar belongs to the gateway's own host
+    from chrome_web_store import fetch
+    state = fetch._new_state("gateway")
+    try:
+        assert state["cookies"] is None
+        header = state["session"].cookies.header_for("chromewebstore.google.com")
+        assert all(f"{name}={value}" in header for name, value in fetch.CONSENT_COOKIES.items())
+        assert state["session"].cookies.header_for("clients2.google.com") is None
+    finally:
+        state["session"].close()
+    state = fetch._new_state(None)
+    try:
+        assert state["cookies"] == fetch.CONSENT_COOKIES and len(state["session"].cookies) == 0
+    finally:
+        state["session"].close()

@@ -1,9 +1,10 @@
 """Chrome Web Store transport: plain curl_cffi with chrome TLS. No browser,
 no login, no tokens, no cookies beyond the EU consent skip. Egress: one
-sticky proxy exit per thread session when config.chrome_web_store_proxy()
-returns one (in production a datacenter exit, owner decision 2026-11-07),
-direct otherwise. A retryable failure drops the session, so the retry rides
-a fresh exit.
+session per thread on the exit config.chrome_web_store_proxy() names: in
+production the shared gateway exit (knob CHROME_WEB_STORE_EXIT = "gateway",
+2026-11-11; a fresh gateway address per request), a sticky proxy exit or the
+server's own IP for the other knob values. A retryable failure drops the
+session, so the retry rides a fresh exit.
 
 Everything the store shows is served by ONE cookie-free endpoint, the same
 batchexecute RPC its own JavaScript calls (validated 2026-11-07, no
@@ -51,7 +52,7 @@ import re
 import sys
 import threading
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 # Allow direct execution (python chrome_web_store/fetch.py): flat imports
 # resolve like under the server. Idempotent when imported normally.
@@ -157,14 +158,20 @@ _local = threading.local()
 
 
 def _new_state(proxy):
-    from curl_cffi import requests as curl_requests
-    sess = curl_requests.Session(impersonate=IMPERSONATE)
-    if proxy:
-        sess.proxies = {"http": proxy, "https": proxy}
+    sess = egress.new_session(proxy, impersonate=IMPERSONATE)     # a proxy URL, None, or the gateway exit ("gateway")
     language = egress.accept_language(proxy)
+    cookies = CONSENT_COOKIES
+    if getattr(sess, "via_exit_gateway", False):
+        # A per-request cookies= would land in the inner curl jar of the
+        # gateway's own host (a second Cookie header beside the one the
+        # gateway session sends for the store): seed the session's own jar.
+        for name, value in CONSENT_COOKIES.items():
+            sess.cookies.set(name, value, urlsplit(SITE).hostname)
+        cookies = None
     return {
         "session": sess,
         "proxy": proxy,
+        "cookies": cookies,
         "rpc_headers": {**RPC_HEADERS, "accept-language": language},
         "crx_headers": {**CRX_HEADERS, "accept-language": language},
     }
@@ -262,7 +269,7 @@ def rpc(rpcid, inner, language=None, label=None):
         state = _state()
         try:
             resp = state["session"].post(url, data={"f.req": freq}, headers=state["rpc_headers"],
-                                         cookies=CONSENT_COOKIES, timeout=RPC_TIMEOUT)
+                                         cookies=state["cookies"], timeout=RPC_TIMEOUT)
         except Exception as e:
             raise ChromeWebStoreUpstreamError(f"{label}: request failed: {type(e).__name__}: {e}")
         text = _classify(resp, label)
